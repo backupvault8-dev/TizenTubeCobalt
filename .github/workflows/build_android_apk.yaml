@@ -1,0 +1,150 @@
+name: Build Android Cobalt APK
+
+on:
+  push:
+    branches:
+      - smarttube-zoom
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android-arm64:
+    name: Build Cobalt APK (android-arm64 qa)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Free Disk Space
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Initial Disk Space ==="
+          df -h
+          echo "Removing unneeded packages and runtimes to free disk space..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          echo "=== Disk Space After Cleanup ==="
+          df -h
+
+      - name: Install System Build Dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl \
+            git \
+            python3-dev \
+            pkgconf \
+            libglib2.0-0 \
+            libnss3 \
+            gperf \
+            libdbus-1-3 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxext6 \
+            libxfixes3 \
+            libxrandr2 \
+            libxtst6 \
+            libgbm1 \
+            libasound2 \
+            libxkbcommon0 \
+            libpango-1.0-0 \
+            gcc-multilib \
+            zstd \
+            xz-utils \
+            jq
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Clone Depot Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$GITHUB_WORKSPACE/depot_tools"
+          echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
+          echo "DEPOT_TOOLS_UPDATE=0" >> $GITHUB_ENV
+
+      - name: Setup Workspace and gclient Config
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/cobalt"
+          cd "$GITHUB_WORKSPACE/cobalt"
+
+          "$GITHUB_WORKSPACE/depot_tools/gclient" config \
+            --name=src \
+            --unmanaged \
+            "${{ github.server_url }}/${{ github.repository }}.git"
+
+          echo "target_os = ['android']" >> .gclient
+          echo "target_cpu = ['arm64']" >> .gclient
+          cat .gclient
+
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          path: cobalt/src
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+
+      - name: Sync Dependencies (gclient sync)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/cobalt"
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          gclient sync --verbose --shallow --no-history --nohooks --force --delete_unversioned_trees
+          gclient runhooks --verbose
+
+      - name: Generate GN Build Files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/cobalt/src"
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          python3 cobalt/build/gn.py -p android-arm64 -C qa --no-rbe
+
+      - name: Compile Cobalt APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/cobalt/src"
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          time autoninja -C out/android-arm64_qa cobalt_apk
+
+      - name: Find and Validate Produced APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Locating Built APK Files ==="
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          find "$GITHUB_WORKSPACE/cobalt/src/out/android-arm64_qa" -name "*.apk" -ls
+
+          # Copy generated APKs to artifacts folder for verification
+          found=0
+          while IFS= read -r apk_file; do
+            echo "Found APK: $apk_file"
+            cp "$apk_file" "$GITHUB_WORKSPACE/artifacts/"
+            found=1
+          done < <(find "$GITHUB_WORKSPACE/cobalt/src/out/android-arm64_qa" -name "*.apk")
+
+          if [ "$found" -eq 0 ]; then
+            echo "ERROR: No APK files were generated in out/android-arm64_qa!"
+            exit 1
+          fi
+
+          echo "=== Artifacts ready for upload ==="
+          ls -la "$GITHUB_WORKSPACE/artifacts/"
+
+      - name: Upload Cobalt APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cobalt_android-arm64_qa_APK
+          path: artifacts/*.apk
+          if-no-files-found: error

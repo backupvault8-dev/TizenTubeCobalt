@@ -18,6 +18,7 @@ import static dev.cobalt.util.Log.TAG;
 
 import android.app.Activity;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
@@ -138,6 +139,13 @@ public abstract class CobaltActivity extends Activity {
   // to Escape), this flag is used by OnBackInvokedCallback to detect physical key presses and
   // bypass simulated key dispatching.
   private boolean mPhysicalBackKeyPressed = false;
+
+  private static final int[] ZOOM_LEVELS = {100, 125, 135, 150, 175, 200, 225, 250, 275, 300};
+  private int mCurrentZoomPercent = 100;
+  private int mLastVideoX;
+  private int mLastVideoY;
+  private int mLastVideoWidth;
+  private int mLastVideoHeight;
 
   private Bundle getActivityMetaData() {
     ComponentName componentName = getIntent().getComponent();
@@ -370,6 +378,31 @@ public abstract class CobaltActivity extends Activity {
   public boolean onKeyDown(int keyCode, KeyEvent event) {
     if (keyCode == KeyEvent.KEYCODE_BACK) {
       mPhysicalBackKeyPressed = true;
+    }
+    // Remote zoom shortcuts:
+    // 1. Zoom In (Increase zoom): ZOOM_IN, CHANNEL_UP, PAGE_UP, Green color key
+    // 2. Zoom Out (Decrease zoom): ZOOM_OUT, CHANNEL_DOWN, PAGE_DOWN, Yellow color key
+    // 3. Reset Zoom (100%): Blue / Red color key, WINDOW, ASPECT_RATIO
+    if (keyCode == KeyEvent.KEYCODE_ZOOM_IN
+        || keyCode == KeyEvent.KEYCODE_CHANNEL_UP
+        || keyCode == KeyEvent.KEYCODE_PAGE_UP
+        || keyCode == KeyEvent.KEYCODE_PROG_GREEN) {
+      zoomIn();
+      return true;
+    }
+    if (keyCode == KeyEvent.KEYCODE_ZOOM_OUT
+        || keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN
+        || keyCode == KeyEvent.KEYCODE_PAGE_DOWN
+        || keyCode == KeyEvent.KEYCODE_PROG_YELLOW) {
+      zoomOut();
+      return true;
+    }
+    if (keyCode == KeyEvent.KEYCODE_PROG_BLUE
+        || keyCode == KeyEvent.KEYCODE_PROG_RED
+        || keyCode == 206 /* KEYCODE_WINDOW */
+        || keyCode == 228 /* KEYCODE_ASPECT_RATIO */) {
+      resetZoom();
+      return true;
     }
     // If input is a from a gamepad button, it shouldn't be dispatched to IME which incorrectly
     // consumes the event as a VKEY_UNKNOWN
@@ -790,31 +823,101 @@ public abstract class CobaltActivity extends Activity {
       // The SurfaceView should be covered by our UI layer in this case.
       return;
     }
+    mLastVideoX = x;
+    mLastVideoY = y;
+    mLastVideoWidth = width;
+    mLastVideoHeight = height;
+
     runOnUiThread(
         new Runnable() {
           @Override
           public void run() {
-            LayoutParams layoutParams = mVideoSurfaceView.getLayoutParams();
-            // Since mVideoSurfaceView is added directly to the Activity's content view, which is a
-            // FrameLayout, we expect its layout params to become FrameLayout.LayoutParams.
-            if (layoutParams instanceof FrameLayout.LayoutParams) {
-              ((FrameLayout.LayoutParams) layoutParams).setMargins(x, y, x + width, y + height);
-            } else {
-              Log.w(
-                  TAG,
-                  "Unexpected video surface layout params class "
-                      + layoutParams.getClass().getName());
-            }
-            layoutParams.width = width;
-            layoutParams.height = height;
-            // Even though as a NativeActivity we're not using the Android UI framework, by setting
-            // the  layout params it will force a layout to be requested. That will cause the
-            // SurfaceView to position its underlying Surface to match the screen coordinates of
-            // where the view would be in a UI layout and to set the surface transform matrix to
-            // match the view's size.
-            mVideoSurfaceView.setLayoutParams(layoutParams);
+            applyVideoSurfaceBounds(x, y, width, height);
           }
         });
+  }
+
+  private void applyVideoSurfaceBounds(int x, int y, int width, int height) {
+    if (mVideoSurfaceView == null) {
+      return;
+    }
+    LayoutParams layoutParams = mVideoSurfaceView.getLayoutParams();
+    if (layoutParams == null) {
+      return;
+    }
+
+    // Scale the Cobalt-provided video rectangle around its center based on current zoom percentage.
+    final float zoom = mCurrentZoomPercent / 100.0f;
+
+    final int zoomWidth = Math.round(width * zoom);
+    final int zoomHeight = Math.round(height * zoom);
+    final int zoomX = x - (zoomWidth - width) / 2;
+    final int zoomY = y - (zoomHeight - height) / 2;
+
+    if (layoutParams instanceof FrameLayout.LayoutParams) {
+      ((FrameLayout.LayoutParams) layoutParams)
+          .setMargins(zoomX, zoomY, zoomX + zoomWidth, zoomY + zoomHeight);
+    } else {
+      Log.w(
+          TAG,
+          "Unexpected video surface layout params class "
+              + layoutParams.getClass().getName());
+    }
+
+    layoutParams.width = zoomWidth;
+    layoutParams.height = zoomHeight;
+    // Even though as a NativeActivity we're not using the Android UI framework, by setting
+    // the layout params it will force a layout to be requested. That will cause the
+    // SurfaceView to position its underlying Surface to match the screen coordinates of
+    // where the view would be in a UI layout and to set the surface transform matrix to
+    // match the view's size.
+    mVideoSurfaceView.setLayoutParams(layoutParams);
+  }
+
+  public void setZoomPercent(int percent) {
+    if (percent < 100) {
+      percent = 100;
+    } else if (percent > 300) {
+      percent = 300;
+    }
+    mCurrentZoomPercent = percent;
+
+    runOnUiThread(
+        new Runnable() {
+          @Override
+          public void run() {
+            if (mLastVideoWidth > 0 && mLastVideoHeight > 0) {
+              applyVideoSurfaceBounds(mLastVideoX, mLastVideoY, mLastVideoWidth, mLastVideoHeight);
+            }
+            Toast.makeText(CobaltActivity.this, "Zoom: " + mCurrentZoomPercent + "%", Toast.LENGTH_SHORT).show();
+          }
+        });
+  }
+
+  public int getZoomPercent() {
+    return mCurrentZoomPercent;
+  }
+
+  public void zoomIn() {
+    for (int level : ZOOM_LEVELS) {
+      if (level > mCurrentZoomPercent) {
+        setZoomPercent(level);
+        return;
+      }
+    }
+  }
+
+  public void zoomOut() {
+    for (int i = ZOOM_LEVELS.length - 1; i >= 0; i--) {
+      if (ZOOM_LEVELS[i] < mCurrentZoomPercent) {
+        setZoomPercent(ZOOM_LEVELS[i]);
+        return;
+      }
+    }
+  }
+
+  public void resetZoom() {
+    setZoomPercent(100);
   }
 
   private void createNewSurfaceView() {
