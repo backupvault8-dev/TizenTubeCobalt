@@ -25,7 +25,6 @@ jobs:
           df -h
           echo "Removing unneeded packages and runtimes to free disk space..."
           sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force || true
@@ -62,13 +61,29 @@ jobs:
             jq
           sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Clone Depot Tools
+      - name: Clone and Bootstrap Depot Tools
         shell: bash
         run: |
           set -euo pipefail
+
           git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$GITHUB_WORKSPACE/depot_tools"
-          echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
-          echo "DEPOT_TOOLS_UPDATE=0" >> $GITHUB_ENV
+
+          export DEPOT_TOOLS_DIR="$GITHUB_WORKSPACE/depot_tools"
+          export DEPOT_TOOLS_UPDATE=0
+          export PATH="$DEPOT_TOOLS_DIR:$PATH"
+
+          # depot_tools shell wrappers (gn, autoninja, python3, etc.) require
+          # the local Python/CIPD bootstrap to be initialized.
+          chmod +x "$DEPOT_TOOLS_DIR/ensure_bootstrap"
+          "$DEPOT_TOOLS_DIR/ensure_bootstrap"
+
+          test -s "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt"
+          echo "depot_tools Python bootstrap: $(cat "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt")"
+
+          "$DEPOT_TOOLS_DIR/python-bin/python3" -c 'import sys; print("depot_tools Python:", sys.executable); print(sys.version)'
+
+          echo "$DEPOT_TOOLS_DIR" >> "$GITHUB_PATH"
+          echo "DEPOT_TOOLS_UPDATE=0" >> "$GITHUB_ENV"
 
       - name: Setup Workspace and gclient Config
         shell: bash
@@ -102,12 +117,34 @@ jobs:
           gclient sync --verbose --shallow --no-history --nohooks --force --delete_unversioned_trees
           gclient runhooks --verbose
 
+      - name: Verify Android Build Toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=${ANDROID_HOME:-<unset>}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}"
+
+          if [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME" ]; then
+            echo "Android SDK found at $ANDROID_HOME"
+          elif [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
+            echo "Android SDK found at $ANDROID_SDK_ROOT"
+          else
+            echo "ERROR: Android SDK was not found on the GitHub runner."
+            exit 1
+          fi
+
+          command -v python3
+          command -v gn
+          command -v autoninja
+          gn --version
+
       - name: Generate GN Build Files
         shell: bash
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/cobalt/src"
           export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          test -s "$GITHUB_WORKSPACE/depot_tools/python3_bin_reldir.txt"
           python3 cobalt/build/gn.py -p android-arm64 -C qa --no-rbe
 
       - name: Compile Cobalt APK
