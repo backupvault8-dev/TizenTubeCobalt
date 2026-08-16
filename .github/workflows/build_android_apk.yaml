@@ -53,7 +53,7 @@ jobs:
             libxrandr2 \
             libxtst6 \
             libgbm1 \
-            libasound2 \
+            libasound2t64 \
             libxkbcommon0 \
             libpango-1.0-0 \
             gcc-multilib \
