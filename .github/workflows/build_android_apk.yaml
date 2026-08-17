@@ -146,18 +146,37 @@ jobs:
           set -euo pipefail
 
           GN_VERSION="git_revision:ebc8f16ca7b0d36a3e532ee90896f9eb48e5423b"
-          GN_ROOT="$GITHUB_WORKSPACE/cobalt/src/buildtools/linux64"
 
-          mkdir -p "$GN_ROOT"
+          GN_TMP="$RUNNER_TEMP/cobalt-gn"
+          GN_DEST="$GITHUB_WORKSPACE/cobalt/src/buildtools/linux64"
+
+          rm -rf "$GN_TMP"
+          mkdir -p "$GN_TMP"
+          mkdir -p "$GN_DEST"
 
           "$GITHUB_WORKSPACE/depot_tools/cipd" install \
             "gn/gn/linux-amd64" \
             "$GN_VERSION" \
-            -root "$GN_ROOT"
+            -root "$GN_TMP"
 
-          echo "=== GN installation ==="
-          find "$GN_ROOT" -maxdepth 2 -type f -name "gn" -ls
+          echo "=== Downloaded GN ==="
+          find "$GN_TMP" -maxdepth 3 -type f -name "gn" -ls
 
+          GN_BINARY="$(find "$GN_TMP" -type f -name gn -print -quit)"
+
+          if [ -z "$GN_BINARY" ]; then
+            echo "ERROR: GN binary was not downloaded."
+            exit 1
+          fi
+
+          cp "$GN_BINARY" "$GN_DEST/gn"
+          chmod +x "$GN_DEST/gn"
+
+          echo "=== Installed GN ==="
+          ls -lh "$GN_DEST/gn"
+
+          "$GN_DEST/gn" --version
+          
       - name: Install Pinned Ninja
         shell: bash
         run: |
