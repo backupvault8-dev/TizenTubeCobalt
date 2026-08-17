@@ -324,16 +324,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          KEYSTORE="$HOME/.android/debug.keystore"
+          HOME_KEYSTORE="$HOME/.android/debug.keystore"
+          SOURCE_KEYSTORE="$GITHUB_WORKSPACE/cobalt/src/.android/debug.keystore"
+
+          echo "=== Creating Android debug keystore ==="
+
+          # Create both locations because the generated Cobalt/Ninja
+          # dependency path may resolve relative to the source checkout.
 
           mkdir -p "$HOME/.android"
+          mkdir -p "$GITHUB_WORKSPACE/cobalt/src/.android"
 
-          if [ ! -f "$KEYSTORE" ]; then
-            echo "Creating Android debug keystore..."
-
+          if [ ! -f "$HOME_KEYSTORE" ]; then
             keytool -genkeypair \
               -v \
-              -keystore "$KEYSTORE" \
+              -keystore "$HOME_KEYSTORE" \
               -storepass android \
               -alias androiddebugkey \
               -keypass android \
@@ -341,18 +346,62 @@ jobs:
               -keysize 2048 \
               -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
-          else
-            echo "Android debug keystore already exists."
           fi
 
-          echo "=== Debug Keystore ==="
-          ls -lh "$KEYSTORE"
+          # Copy the same debug keystore into the source-tree location
+          # expected by the generated Ninja dependency.
+          cp "$HOME_KEYSTORE" "$SOURCE_KEYSTORE"
 
+          chmod 600 "$HOME_KEYSTORE"
+          chmod 600 "$SOURCE_KEYSTORE"
+
+          echo "=== HOME keystore ==="
+          ls -lh "$HOME_KEYSTORE"
+
+          echo "=== Source-tree keystore ==="
+          ls -lh "$SOURCE_KEYSTORE"
+
+          echo "=== Verifying keystore ==="
           keytool -list \
-            -keystore "$KEYSTORE" \
+            -keystore "$SOURCE_KEYSTORE" \
             -storepass android \
             -alias androiddebugkey
 
+      - name: Verify Debug Keystore Paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== HOME ==="
+          echo "$HOME"
+
+          echo "=== Workspace ==="
+          echo "$GITHUB_WORKSPACE"
+
+          echo "=== Expected locations ==="
+          ls -lh "$HOME/.android/debug.keystore"
+          ls -lh "$GITHUB_WORKSPACE/cobalt/src/.android/debug.keystore"
+
+          echo "=== Resolving Ninja-style path ==="
+
+          cd "$GITHUB_WORKSPACE/cobalt/src/out/android-arm64_qa/phoney/cobalt/android" 2>/dev/null || true
+
+          if [ -d "$PWD" ]; then
+            TARGET="../../../../../../.android/debug.keystore"
+
+            echo "Current directory:"
+            pwd
+
+            echo "Resolved path:"
+            realpath "$TARGET" || true
+
+            echo "Exists:"
+            test -f "$TARGET"
+            echo "YES"
+          else
+            echo "Phoney directory does not exist; skipping diagnostic resolution."
+          fi
+            
       - name: Compile Cobalt APK
         shell: bash
         run: |
