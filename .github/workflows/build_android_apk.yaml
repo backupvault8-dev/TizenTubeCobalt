@@ -188,17 +188,39 @@ jobs:
           set -euo pipefail
 
           NINJA_VERSION="version:3@1.12.1.chromium.4"
-          NINJA_ROOT="$GITHUB_WORKSPACE/cobalt/src/third_party/ninja"
 
-          mkdir -p "$NINJA_ROOT"
+          NINJA_TMP="$RUNNER_TEMP/cobalt-ninja"
+          NINJA_DEST="$GITHUB_WORKSPACE/cobalt/src/third_party/ninja"
+
+          rm -rf "$NINJA_TMP"
+          mkdir -p "$NINJA_TMP"
 
           "$GITHUB_WORKSPACE/depot_tools/cipd" install \
             "infra/3pp/tools/ninja/linux-amd64" \
             "$NINJA_VERSION" \
-            -root "$NINJA_ROOT"
+            -root "$NINJA_TMP"
 
-          echo "=== Ninja installation ==="
-          find "$NINJA_ROOT" -maxdepth 2 -type f -name "ninja" -ls
+          echo "=== Downloaded Ninja ==="
+          find "$NINJA_TMP" -maxdepth 3 -type f -name "ninja" -ls
+
+          NINJA_BINARY="$(find "$NINJA_TMP" -type f -name ninja -print -quit)"
+
+          if [ -z "$NINJA_BINARY" ]; then
+            echo "ERROR: Ninja binary was not downloaded."
+            exit 1
+          fi
+
+          echo "Ninja binary: $NINJA_BINARY"
+
+          sudo mkdir -p "$NINJA_DEST"
+          sudo chown -R "$USER:$USER" "$NINJA_DEST"
+
+          install -m 0755 "$NINJA_BINARY" "$NINJA_DEST/ninja"
+
+          echo "=== Installed Ninja ==="
+          ls -lh "$NINJA_DEST/ninja"
+
+          "$NINJA_DEST/ninja" --version
 
       - name: Install Pinned Siso
         shell: bash
