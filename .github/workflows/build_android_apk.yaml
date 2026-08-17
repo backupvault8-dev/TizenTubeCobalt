@@ -117,6 +117,17 @@ jobs:
           gclient sync --verbose --shallow --no-history --nohooks --force --delete_unversioned_trees
           gclient runhooks --verbose
 
+                    echo "=== GN diagnostic ==="
+          echo "PATH=$PATH"
+          echo "which -a gn || true"
+          echo "Checking checkout GN:"
+          ls -la "$GITHUB_WORKSPACE/cobalt/src/third_party/gn/" || true
+          ls -la "$GITHUB_WORKSPACE/cobalt/src/third_party/gn/gn" || true
+          echo "Checking buildtools GN:"
+          find "$GITHUB_WORKSPACE/cobalt/src/buildtools" -maxdepth 3 -type f -name "gn" -print 2>/dev/null || true
+          echo "Checking depot_tools GN:"
+          find "$GITHUB_WORKSPACE/depot_tools" -maxdepth 4 -type f -name "gn" -print 2>/dev/null || true
+
       - name: Verify Android Build Toolchain
         shell: bash
         run: |
