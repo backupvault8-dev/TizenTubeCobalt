@@ -228,17 +228,41 @@ jobs:
           set -euo pipefail
 
           SISO_VERSION="git_revision:080102c196eef824a444b70272cb6d645b6abe09"
-          SISO_ROOT="$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd"
 
-          mkdir -p "$SISO_ROOT"
+          SISO_TMP="$RUNNER_TEMP/cobalt-siso"
+          SISO_DEST="$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd"
+
+          rm -rf "$SISO_TMP"
+          mkdir -p "$SISO_TMP"
 
           "$GITHUB_WORKSPACE/depot_tools/cipd" install \
             "infra/build/siso/linux-amd64" \
             "$SISO_VERSION" \
-            -root "$SISO_ROOT"
+            -root "$SISO_TMP"
 
-          echo "=== Siso installation ==="
-          find "$SISO_ROOT" -maxdepth 2 -type f -name "siso" -ls
+          echo "=== Downloaded Siso ==="
+          find "$SISO_TMP" -maxdepth 3 -type f -name "siso" -ls
+
+          SISO_BINARY="$(find "$SISO_TMP" -type f -name siso -print -quit)"
+
+          if [ -z "$SISO_BINARY" ]; then
+            echo "ERROR: Siso binary was not downloaded."
+            exit 1
+          fi
+
+          echo "Siso binary: $SISO_BINARY"
+
+          sudo mkdir -p "$SISO_DEST"
+          sudo chown -R "$USER:$USER" "$SISO_DEST"
+
+          install -m 0755 "$SISO_BINARY" "$SISO_DEST/siso"
+
+          echo "=== Installed Siso ==="
+          ls -lh "$SISO_DEST/siso"
+
+          "$SISO_DEST/siso" help >/dev/null
+
+          echo "Siso installation successful."
 
       - name: Verify Android Build Toolchain
         shell: bash
