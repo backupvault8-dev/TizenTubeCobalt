@@ -269,6 +269,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          export PATH="$GITHUB_WORKSPACE/cobalt/src/buildtools/linux64:$GITHUB_WORKSPACE/cobalt/src/third_party/ninja:$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd:$GITHUB_WORKSPACE/depot_tools:$PATH"
+
           echo "=== Android SDK ==="
           echo "ANDROID_HOME=${ANDROID_HOME:-<unset>}"
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}"
@@ -282,30 +284,23 @@ jobs:
             exit 1
           fi
 
-          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
-
           echo "=== Tool locations ==="
 
           command -v python3
           command -v gn
+          command -v ninja
           command -v autoninja
 
           echo "=== GN ==="
           gn --version
 
           echo "=== Ninja ==="
-          find "$GITHUB_WORKSPACE/cobalt/src/third_party/ninja" \
-            -maxdepth 2 \
-            -type f \
-            -name "ninja" \
-            -print
+          ninja --version
 
           echo "=== Siso ==="
-          find "$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd" \
-            -maxdepth 2 \
-            -type f \
-            -name "siso" \
-            -print
+          "$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd/siso" help >/dev/null
+
+          echo "=== Build toolchain OK ==="
 
       - name: Generate GN Build Files
         shell: bash
@@ -314,7 +309,7 @@ jobs:
 
           cd "$GITHUB_WORKSPACE/cobalt/src"
 
-          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          export PATH="$GITHUB_WORKSPACE/cobalt/src/buildtools/linux64:$GITHUB_WORKSPACE/cobalt/src/third_party/ninja:$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd:$GITHUB_WORKSPACE/depot_tools:$PATH"
 
           test -s \
             "$GITHUB_WORKSPACE/depot_tools/python3_bin_reldir.txt"
@@ -331,7 +326,7 @@ jobs:
 
           cd "$GITHUB_WORKSPACE/cobalt/src"
 
-          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          export PATH="$GITHUB_WORKSPACE/cobalt/src/buildtools/linux64:$GITHUB_WORKSPACE/cobalt/src/third_party/ninja:$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd:$GITHUB_WORKSPACE/depot_tools:$PATH"
 
           time autoninja \
             -C out/android-arm64_qa \
