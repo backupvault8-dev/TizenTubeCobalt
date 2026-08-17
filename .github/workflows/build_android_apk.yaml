@@ -152,7 +152,6 @@ jobs:
 
           rm -rf "$GN_TMP"
           mkdir -p "$GN_TMP"
-          mkdir -p "$GN_DEST"
 
           "$GITHUB_WORKSPACE/depot_tools/cipd" install \
             "gn/gn/linux-amd64" \
@@ -169,8 +168,14 @@ jobs:
             exit 1
           fi
 
-          cp "$GN_BINARY" "$GN_DEST/gn"
-          chmod +x "$GN_DEST/gn"
+          echo "GN binary: $GN_BINARY"
+
+          # The Cobalt checkout's buildtools directory may have been
+          # created by a hook with restrictive ownership/permissions.
+          sudo mkdir -p "$GN_DEST"
+          sudo chown -R "$USER:$USER" "$GN_DEST"
+
+          install -m 0755 "$GN_BINARY" "$GN_DEST/gn"
 
           echo "=== Installed GN ==="
           ls -lh "$GN_DEST/gn"
