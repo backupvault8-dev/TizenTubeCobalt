@@ -21,13 +21,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           echo "=== Initial Disk Space ==="
           df -h
-          echo "Removing unneeded packages and runtimes to free disk space..."
+
+          echo "Removing unneeded packages and runtimes..."
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force || true
+
           echo "=== Disk Space After Cleanup ==="
           df -h
 
@@ -35,7 +38,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           sudo apt-get update -qq
+
           sudo apt-get install -y --no-install-recommends \
             curl \
             git \
@@ -59,6 +64,7 @@ jobs:
             zstd \
             xz-utils \
             jq
+
           sudo rm -rf /var/lib/apt/lists/*
 
       - name: Clone and Bootstrap Depot Tools
@@ -66,30 +72,31 @@ jobs:
         run: |
           set -euo pipefail
 
-          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$GITHUB_WORKSPACE/depot_tools"
+          git clone \
+            --depth 1 \
+            https://chromium.googlesource.com/chromium/tools/depot_tools.git \
+            "$GITHUB_WORKSPACE/depot_tools"
 
           export DEPOT_TOOLS_DIR="$GITHUB_WORKSPACE/depot_tools"
-          export DEPOT_TOOLS_UPDATE=0
-          export PATH="$DEPOT_TOOLS_DIR:$PATH"
 
-          # depot_tools shell wrappers (gn, autoninja, python3, etc.) require
-          # the local Python/CIPD bootstrap to be initialized.
           chmod +x "$DEPOT_TOOLS_DIR/ensure_bootstrap"
           "$DEPOT_TOOLS_DIR/ensure_bootstrap"
 
           test -s "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt"
-          echo "depot_tools Python bootstrap: $(cat "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt")"
 
-          "$DEPOT_TOOLS_DIR/python-bin/python3" -c 'import sys; print("depot_tools Python:", sys.executable); print(sys.version)'
+          echo "Depot tools Python:"
+          "$DEPOT_TOOLS_DIR/python-bin/python3" \
+            -c 'import sys; print(sys.executable); print(sys.version)'
 
           echo "$DEPOT_TOOLS_DIR" >> "$GITHUB_PATH"
-          echo "DEPOT_TOOLS_UPDATE=0" >> "$GITHUB_ENV"
 
       - name: Setup Workspace and gclient Config
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p "$GITHUB_WORKSPACE/cobalt"
+
           cd "$GITHUB_WORKSPACE/cobalt"
 
           "$GITHUB_WORKSPACE/depot_tools/gclient" config \
@@ -99,6 +106,8 @@ jobs:
 
           echo "target_os = ['android']" >> .gclient
           echo "target_cpu = ['arm64']" >> .gclient
+
+          echo "=== .gclient ==="
           cat .gclient
 
       - name: Checkout Source Code
@@ -108,30 +117,89 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 1
 
-      - name: Sync Dependencies (gclient sync)
+      - name: Sync Dependencies
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$GITHUB_WORKSPACE/cobalt"
+
           export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
-          gclient sync --verbose --shallow --no-history --nohooks --force --delete_unversioned_trees
+
+          gclient sync \
+            --verbose \
+            --shallow \
+            --no-history \
+            --nohooks \
+            --force \
+            --delete_unversioned_trees
+
           gclient runhooks --verbose
 
-                    echo "=== GN diagnostic ==="
-          echo "PATH=$PATH"
-          echo "which -a gn || true"
-          echo "Checking checkout GN:"
-          ls -la "$GITHUB_WORKSPACE/cobalt/src/third_party/gn/" || true
-          ls -la "$GITHUB_WORKSPACE/cobalt/src/third_party/gn/gn" || true
-          echo "Checking buildtools GN:"
-          find "$GITHUB_WORKSPACE/cobalt/src/buildtools" -maxdepth 3 -type f -name "gn" -print 2>/dev/null || true
-          echo "Checking depot_tools GN:"
-          find "$GITHUB_WORKSPACE/depot_tools" -maxdepth 4 -type f -name "gn" -print 2>/dev/null || true
+      # The Cobalt DEPS file conditionally skips these CIPD tools when the
+      # primary checkout is a Git source. Install the exact versions pinned
+      # by this checkout's DEPS file.
+
+      - name: Install Pinned GN
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          GN_VERSION="git_revision:ebc8f16ca7b0d36a3e532ee90896f9eb48e5423b"
+          GN_ROOT="$GITHUB_WORKSPACE/cobalt/src/buildtools/linux64"
+
+          mkdir -p "$GN_ROOT"
+
+          "$GITHUB_WORKSPACE/depot_tools/cipd" install \
+            "gn/gn/linux-amd64" \
+            "$GN_VERSION" \
+            -root "$GN_ROOT"
+
+          echo "=== GN installation ==="
+          find "$GN_ROOT" -maxdepth 2 -type f -name "gn" -ls
+
+      - name: Install Pinned Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NINJA_VERSION="version:3@1.12.1.chromium.4"
+          NINJA_ROOT="$GITHUB_WORKSPACE/cobalt/src/third_party/ninja"
+
+          mkdir -p "$NINJA_ROOT"
+
+          "$GITHUB_WORKSPACE/depot_tools/cipd" install \
+            "infra/3pp/tools/ninja/linux-amd64" \
+            "$NINJA_VERSION" \
+            -root "$NINJA_ROOT"
+
+          echo "=== Ninja installation ==="
+          find "$NINJA_ROOT" -maxdepth 2 -type f -name "ninja" -ls
+
+      - name: Install Pinned Siso
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SISO_VERSION="git_revision:080102c196eef824a444b70272cb6d645b6abe09"
+          SISO_ROOT="$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd"
+
+          mkdir -p "$SISO_ROOT"
+
+          "$GITHUB_WORKSPACE/depot_tools/cipd" install \
+            "infra/build/siso/linux-amd64" \
+            "$SISO_VERSION" \
+            -root "$SISO_ROOT"
+
+          echo "=== Siso installation ==="
+          find "$SISO_ROOT" -maxdepth 2 -type f -name "siso" -ls
 
       - name: Verify Android Build Toolchain
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "=== Android SDK ==="
           echo "ANDROID_HOME=${ANDROID_HOME:-<unset>}"
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}"
 
@@ -140,54 +208,99 @@ jobs:
           elif [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
             echo "Android SDK found at $ANDROID_SDK_ROOT"
           else
-            echo "ERROR: Android SDK was not found on the GitHub runner."
+            echo "ERROR: Android SDK was not found."
             exit 1
           fi
+
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+
+          echo "=== Tool locations ==="
 
           command -v python3
           command -v gn
           command -v autoninja
+
+          echo "=== GN ==="
           gn --version
+
+          echo "=== Ninja ==="
+          find "$GITHUB_WORKSPACE/cobalt/src/third_party/ninja" \
+            -maxdepth 2 \
+            -type f \
+            -name "ninja" \
+            -print
+
+          echo "=== Siso ==="
+          find "$GITHUB_WORKSPACE/cobalt/src/third_party/siso/cipd" \
+            -maxdepth 2 \
+            -type f \
+            -name "siso" \
+            -print
 
       - name: Generate GN Build Files
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$GITHUB_WORKSPACE/cobalt/src"
+
           export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
-          test -s "$GITHUB_WORKSPACE/depot_tools/python3_bin_reldir.txt"
-          python3 cobalt/build/gn.py -p android-arm64 -C qa --no-rbe
+
+          test -s \
+            "$GITHUB_WORKSPACE/depot_tools/python3_bin_reldir.txt"
+
+          python3 cobalt/build/gn.py \
+            -p android-arm64 \
+            -C qa \
+            --no-rbe
 
       - name: Compile Cobalt APK
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$GITHUB_WORKSPACE/cobalt/src"
+
           export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
-          time autoninja -C out/android-arm64_qa cobalt_apk
+
+          time autoninja \
+            -C out/android-arm64_qa \
+            cobalt_apk
 
       - name: Find and Validate Produced APKs
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== Locating Built APK Files ==="
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
-          find "$GITHUB_WORKSPACE/cobalt/src/out/android-arm64_qa" -name "*.apk" -ls
 
-          # Copy generated APKs to artifacts folder for verification
+          echo "=== Locating Built APK Files ==="
+
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+
+          find \
+            "$GITHUB_WORKSPACE/cobalt/src/out/android-arm64_qa" \
+            -name "*.apk" \
+            -ls
+
           found=0
+
           while IFS= read -r apk_file; do
             echo "Found APK: $apk_file"
+
             cp "$apk_file" "$GITHUB_WORKSPACE/artifacts/"
+
             found=1
-          done < <(find "$GITHUB_WORKSPACE/cobalt/src/out/android-arm64_qa" -name "*.apk")
+          done < <(
+            find \
+              "$GITHUB_WORKSPACE/cobalt/src/out/android-arm64_qa" \
+              -name "*.apk"
+          )
 
           if [ "$found" -eq 0 ]; then
-            echo "ERROR: No APK files were generated in out/android-arm64_qa!"
+            echo "ERROR: No APK files were generated."
             exit 1
           fi
 
-          echo "=== Artifacts ready for upload ==="
+          echo "=== Artifacts ready ==="
           ls -la "$GITHUB_WORKSPACE/artifacts/"
 
       - name: Upload Cobalt APK Artifact
